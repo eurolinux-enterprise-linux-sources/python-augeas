@@ -5,50 +5,94 @@
 %bcond_without egg
 %endif
 
+%global with_python3 0
+
 Name:		python-augeas
-Version:	0.4.1
-Release:	5%{?dist}
+Version:	0.5.0
+Release:	2%{?dist}
 Summary:	Python bindings to augeas
 Group:		Development/Languages
 License:	LGPLv2+
 URL:		http://augeas.net/
-Source0:	http://augeas.net/download/python/%{name}-%{version}.tar.gz
+Source0:	http://fedorahosted.org/released/%{name}/%{name}-%{version}.tar.gz
 BuildRoot:	%{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
-Requires:	augeas-libs 
-Requires:   python-ctypes
+Requires:	augeas-libs
 BuildArch:	noarch
 
 BuildRequires:	python-setuptools python-devel
+%if 0%{?with_python3}
+BuildRequires:	python3-setuptools python3-devel
+%endif # with_python3
 
 %description
 python-augeas is a set of Python bindings around augeas.
 
+
+%if 0%{?with_python3}
+%package -n python3-augeas
+Summary:	Python 3 bindings to augeas
+Requires:	augeas-libs
+
+%description -n python3-augeas
+python3-augeas is a set of Python bindings around augeas.
+%endif # with_python3
+
+
 %prep
 %setup -q
 
+%if 0%{?with_python3}
+rm -rf %{py3dir}
+cp -a . %{py3dir}
+%endif # with_python3
 
 %build
 # Remove CFLAGS=... for noarch packages (unneeded)
-CFLAGS="$RPM_OPT_FLAGS" %{__python} setup.py build_ext -i
-CFLAGS="$RPM_OPT_FLAGS" %{__python} setup.py build
+CFLAGS="$RPM_OPT_FLAGS"
+%{__python} setup.py build_ext -i
+%{__python} setup.py build
+
+%if 0%{?with_python3}
+pushd %{py3dir}
+%{__python3} setup.py build_ext -i
+%{__python3} setup.py build
+popd
+%endif # with_python3
 
 %install
 rm -rf $RPM_BUILD_ROOT
 %{__python} setup.py install -O1 --skip-build --root $RPM_BUILD_ROOT
 
- 
-%clean
-rm -rf $RPM_BUILD_ROOT
+%if 0%{?with_python3}
+pushd %{py3dir}
+%{__python3} setup.py install -O1 --skip-build --root $RPM_BUILD_ROOT
+popd
+%endif # with_python3
 
 %files
-%defattr(-,root,root,-)
 %doc COPYING AUTHORS README.txt
 %{python_sitelib}/augeas.py*
 %if %{with egg}
 %{python_sitelib}/*augeas*.egg-info
 %endif
 
+%if 0%{?with_python3}
+%files -n python3-augeas
+%doc COPYING AUTHORS README.txt
+%{python3_sitelib}/*
+%endif # with_python3
+
+
 %changelog
+* Mon Sep 22 2014 Tomas Radej <tradej@redhat.com> - 0.5.0-2
+- Added Python 3 subpackage
+
+* Thu Sep 04 2014 Greg Swift <gregswift@gmail.com> - 0.5.0-1
+- Version 0.5.0 release
+
+* Sat Jun 07 2014 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 0.4.1-6
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_21_Mass_Rebuild
+
 * Tue Oct 22 2013 Greg Swift <gregswift@gmail.com> - 0.4.1-5
 - add python-ctypes dependency (rhbz#1020239)
 

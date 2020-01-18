@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import unittest
 import sys
 import os
@@ -23,7 +25,7 @@ def recurmatch(aug, path):
         if path != "/":
             aug.match(path)
         for i in m:
-            for x in recurmatch(aug, i):                
+            for x in recurmatch(aug, i):
                 yield x
         else:
             for i in aug.match(path + "/*"):
@@ -54,7 +56,7 @@ class TestAugeas(unittest.TestCase):
         path = "/"
         matches = recurmatch(a, path)
         for (p, attr) in matches:
-            print >> output, p, attr
+            print(p, attr, file=output)
             self.failUnless(p != None and attr != None)
         output.close()
 
@@ -64,13 +66,13 @@ class TestAugeas(unittest.TestCase):
         num = 0
         for entry in a.match("/files/etc/grub.conf/title"):
             num += 1
-        self.failUnless(num == 2)
+        self.assertEqual(num, 2)
         default = int(a.get("/files/etc/grub.conf/default"))
-        self.failUnless(default == 0)
+        self.assertEqual(default, 0)
         a.set("/files/etc/grub.conf/default", str(1))
         a.save()
         default = int(a.get("/files/etc/grub.conf/default"))
-        self.failUnless(default == 1)
+        self.assertEqual(default, 1)
         a.set("/files/etc/grub.conf/default", str(0))
         a.save()
 
@@ -90,7 +92,7 @@ class TestAugeas(unittest.TestCase):
         a = augeas.Augeas(root=MYROOT)
         a.defnode("bighost", "/files/etc/hosts/50/ipaddr", "192.168.1.1")
         value = a.get("$bighost")
-        self.failUnless(value == "192.168.1.1")
+        self.assertEqual(value, "192.168.1.1")
         del a
 
     def test07Setm(self):
@@ -100,7 +102,7 @@ class TestAugeas(unittest.TestCase):
         self.failUnless(matches)
         a.setm("/files/etc/hosts", "*/ipaddr", "192.168.1.1")
         for i in matches:
-            self.failUnless(a.get(i) == "192.168.1.1")
+            self.assertEqual(a.get(i), "192.168.1.1")
         del a
 
     def test08Span(self):
@@ -130,18 +132,91 @@ class TestAugeas(unittest.TestCase):
         error = None
         try:
             r = a.span("/files")
-        except ValueError, e:
+        except ValueError as e:
             error = e
-        self.assertTrue(isinstance(e, ValueError))
+        self.assertTrue(isinstance(error, ValueError))
 
         error = None
         try:
             r = a.span("/random")
-        except ValueError, e:
+        except ValueError as e:
             error = e
-        self.assertTrue(isinstance(e, ValueError))
+        self.assertTrue(isinstance(error, ValueError))
 
         del a
+
+    def test09TextStore(self):
+        hosts = "192.168.0.1 rtr.example.com router\n"
+        a = augeas.Augeas(root=MYROOT)
+        r = a.set("/raw/hosts", hosts);
+        r = a.text_store("Hosts.lns", "/raw/hosts", "/t1")
+
+        # Test bad lens name
+        try:
+            r = a.text_store("Notthere.lns", "/raw/hosts", "/t2")
+        except ValueError as e:
+            error = e
+        self.assertTrue(isinstance(error, ValueError))
+
+    def test10TextRetrieve(self):
+        hosts = "192.168.0.1 rtr.example.com router\n"
+        a = augeas.Augeas(root=MYROOT)
+        r = a.set("/raw/hosts", hosts);
+        r = a.text_store("Hosts.lns", "/raw/hosts", "/t1")
+        r = a.text_retrieve("Hosts.lns", "/raw/hosts", "/t1", "/out/hosts")
+        hosts_out = a.get("/out/hosts")
+        self.assertEqual(hosts, hosts_out)
+
+        # Test bad lens name
+        try:
+            r = a.text_store("Notthere.lns", "/raw/hosts", "/t2")
+        except ValueError as e:
+            error = e
+        self.assertTrue(isinstance(error, ValueError))
+
+    def test11Rename(self):
+        a = augeas.Augeas(root=MYROOT)
+        r = a.set("/a/b/c", "value");
+        r = a.rename("/a/b/c", "d");
+        self.assertEqual(r, 1)
+        r = a.set("/a/e/d", "value2");
+        r = a.rename("/a//d", "x");
+        self.assertEqual(r, 2)
+        try:
+            r = a.rename("/a/e/x", "a/b");
+        except ValueError as e:
+            error = e
+        self.assertTrue(isinstance(error, ValueError))
+
+    def test12Transform(self):
+        a = augeas.Augeas(root=MYROOT)
+
+        r = a.transform("Foo", "/tmp/bar")
+        lens = a.get("/augeas/load/Foo/lens")
+        self.assertEqual(lens, "Foo.lns")
+        incl = a.get("/augeas/load/Foo/incl")
+        self.assertEqual(incl, "/tmp/bar")
+
+        r = a.transform("Foo", "/tmp/baz", True)
+        excl = a.get("/augeas/load/Foo/excl")
+        self.assertEqual(excl, "/tmp/baz")
+
+    def test13AddTransform(self):
+        a = augeas.Augeas(root=MYROOT)
+
+        r = a.add_transform("Foo", "/tmp/bar")
+        incl = a.get("/augeas/load/Foo/incl")
+        self.assertEqual(incl, "/tmp/bar")
+
+        r = a.add_transform("Foo", "/tmp/bar", "Faz", "/tmp/baz")
+        excl = a.get("/augeas/load/Foo/excl")
+        self.assertEqual(excl, "/tmp/baz")
+
+    def test14Label(self):
+        a = augeas.Augeas(root=MYROOT)
+
+        lbl = a.label("/augeas/version")
+        self.assertEqual(lbl, "version")
 
 def getsuite():
     suite = unittest.TestSuite()

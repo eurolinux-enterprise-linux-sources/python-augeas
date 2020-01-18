@@ -42,6 +42,28 @@ import types
 import ctypes
 import ctypes.util
 from sys import version_info as _pyver
+from functools import reduce
+
+
+PY3 = _pyver >= (3,)
+AUGENC = 'utf8'
+
+
+if PY3:
+    string_types = str
+else:
+    string_types = basestring
+
+
+def enc(st):
+    if st:
+        return st.encode(AUGENC)
+
+
+def dec(st):
+    if st:
+        return st.decode(AUGENC)
+
 
 def _dlopen(*args):
     """Search for one of the libraries given as arguments and load it.
@@ -55,12 +77,6 @@ def _dlopen(*args):
 
 class Augeas(object):
     "Class wrapper for the augeas library"
-
-    # Load libpython (for 'PyFile_AsFile()' and 'PyMem_Free()')
-    # pylint: disable-msg=W0142
-    _libpython = _dlopen(*["python" + _v % _pyver[:2]
-                           for _v in ("%d.%d", "%d%d")])
-    _libpython.PyFile_AsFile.restype = ctypes.c_void_p
 
     # Load libaugeas
     _libaugeas = _dlopen("augeas")
@@ -91,15 +107,15 @@ class Augeas(object):
         'flags' is a bitmask made up of values from AUG_FLAGS."""
 
         # Sanity checks
-        if not isinstance(root, basestring) and root != None:
+        if not isinstance(root, string_types) and root != None:
             raise TypeError("root MUST be a string or None!")
-        if not isinstance(loadpath, basestring) and loadpath != None:
+        if not isinstance(loadpath, string_types) and loadpath != None:
             raise TypeError("loadpath MUST be a string or None!")
         if not isinstance(flags, int):
             raise TypeError("flag MUST be a flag!")
 
         # Create the Augeas object
-        self.__handle = Augeas._libaugeas.aug_init(root, loadpath, flags)
+        self.__handle = Augeas._libaugeas.aug_init(enc(root), enc(loadpath), flags)
         if not self.__handle:
             raise RuntimeError("Unable to create Augeas object!")
         # Make sure self.__handle is a void*, not an integer
@@ -114,7 +130,7 @@ class Augeas(object):
         It is an error if more than one node matches 'path'."""
 
         # Sanity checks
-        if not isinstance(path, basestring):
+        if not isinstance(path, string_types):
             raise TypeError("path MUST be a string!")
         if not self.__handle:
             raise RuntimeError("The Augeas object has already been closed!")
@@ -123,12 +139,34 @@ class Augeas(object):
         value = ctypes.c_char_p()
 
         # Call the function and pass value by reference (char **)
-        ret = Augeas._libaugeas.aug_get(self.__handle, path,
+        ret = Augeas._libaugeas.aug_get(self.__handle, enc(path),
                                         ctypes.byref(value))
         if ret > 1:
             raise ValueError("path specified had too many matches!")
 
-        return value.value
+        return dec(value.value)
+
+    def label(self, path):
+        """Lookup the label associated with 'path'.
+        Returns the label of the path specified.
+        It is an error if more than one node matches 'path'."""
+
+        # Sanity checks
+        if not isinstance(path, string_types):
+            raise TypeError("path MUST be a string!")
+        if not self.__handle:
+            raise RuntimeError("The Augeas object has already been closed!")
+
+        # Create the char * value
+        label = ctypes.c_char_p()
+
+        # Call the function and pass value by reference (char **)
+        ret = Augeas._libaugeas.aug_label(self.__handle, enc(path),
+                                          ctypes.byref(label))
+        if ret > 1:
+            raise ValueError("path specified had too many matches!")
+
+        return dec(label.value)
 
     def set(self, path, value):
         """Set the value associated with 'path' to 'value'.
@@ -136,15 +174,15 @@ class Augeas(object):
         It is an error if more than one node matches 'path'."""
 
         # Sanity checks
-        if not isinstance(path, basestring):
+        if not isinstance(path, string_types):
             raise TypeError("path MUST be a string!")
-        if not isinstance(value, basestring) and type(value) != types.NoneType:
+        if not isinstance(value, string_types) and type(value) != type(None):
             raise TypeError("value MUST be a string or None!")
         if not self.__handle:
             raise RuntimeError("The Augeas object has already been closed!")
 
         # Call the function
-        ret = Augeas._libaugeas.aug_set(self.__handle, path, value)
+        ret = Augeas._libaugeas.aug_set(self.__handle, enc(path), enc(value))
         if ret != 0:
             raise ValueError("Unable to set value to path!")
 
@@ -157,18 +195,65 @@ class Augeas(object):
 
         # Sanity checks
         if type(base) != str:
-            raise TypeError, "base MUST be a string!"
+            raise TypeError("base MUST be a string!")
         if type(sub) != str and sub != None:
-            raise TypeError, "sub MUST be a string or None!"
+            raise TypeError("sub MUST be a string or None!")
         if type(value) != str:
-            raise TypeError, "value MUST be a string!"
+            raise TypeError("value MUST be a string!")
         if not self.__handle:
-            raise RuntimeError, "The Augeas object has already been closed!"
+            raise RuntimeError("The Augeas object has already been closed!")
 
         # Call the function
-        ret = Augeas._libaugeas.aug_setm(self.__handle, base, sub, value)
+        ret = Augeas._libaugeas.aug_setm(
+            self.__handle, enc(base), enc(sub), enc(value))
         if ret < 0:
-            raise ValueError, "Unable to set value to path!"
+            raise ValueError("Unable to set value to path!")
+        return ret
+
+    def text_store(self, lens, node, path):
+        """Use the value of node 'node' as a string and transform it into a tree
+        using the lens 'lens' and store it in the tree at 'path', which will be
+        overwritten. 'path' and 'node' are path expressions."""
+
+        # Sanity checks
+        if not isinstance(lens, string_types):
+            raise TypeError("lens MUST be a string!")
+        if not isinstance(node, string_types):
+            raise TypeError("node MUST be a string!")
+        if not isinstance(path, string_types):
+            raise TypeError("path MUST be a string!")
+        if not self.__handle:
+            raise RuntimeError("The Augeas object has already been closed!")
+
+        # Call the function
+        ret = Augeas._libaugeas.aug_text_store(
+            self.__handle, enc(lens), enc(node), enc(path))
+        if ret != 0:
+            raise ValueError("Unable to store text at node!")
+        return ret
+
+    def text_retrieve(self, lens, node_in, path, node_out):
+        """Transform the tree at 'path' into a string using lens 'lens' and store it in
+        the node 'node_out', assuming the tree was initially generated using the
+        value of node 'node_in'. 'path', 'node_in', and 'node_out' are path expressions."""
+
+        # Sanity checks
+        if not isinstance(lens, string_types):
+            raise TypeError("lens MUST be a string!")
+        if not isinstance(node_in, string_types):
+            raise TypeError("node_in MUST be a string!")
+        if not isinstance(path, string_types):
+            raise TypeError("path MUST be a string!")
+        if not isinstance(node_out, string_types):
+            raise TypeError("node_out MUST be a string!")
+        if not self.__handle:
+            raise RuntimeError("The Augeas object has already been closed!")
+
+        # Call the function
+        ret = Augeas._libaugeas.aug_text_retrieve(
+            self.__handle, enc(lens), enc(node_in), enc(path), enc(node_out))
+        if ret != 0:
+            raise ValueError("Unable to store text at node!")
         return ret
 
     def defvar(self, name, expr):
@@ -184,16 +269,16 @@ class Augeas(object):
 
         # Sanity checks
         if type(name) != str:
-            raise TypeError, "name MUST be a string!"
+            raise TypeError("name MUST be a string!")
         if type(expr) != str and expr != None:
-            raise TypeError, "expr MUST be a string or None!"
+            raise TypeError("expr MUST be a string or None!")
         if not self.__handle:
-            raise RuntimeError, "The Augeas object has already been closed!"
+            raise RuntimeError("The Augeas object has already been closed!")
 
         # Call the function
-        ret = Augeas._libaugeas.aug_defvar(self.__handle, name, expr)
+        ret = Augeas._libaugeas.aug_defvar(self.__handle, enc(name), enc(expr))
         if ret < 0:
-            raise ValueError, "Unable to register variable!"
+            raise ValueError("Unable to register variable!")
         return ret
 
     def defnode(self, name, expr, value):
@@ -208,18 +293,19 @@ class Augeas(object):
 
         # Sanity checks
         if type(name) != str:
-            raise TypeError, "name MUST be a string!"
+            raise TypeError("name MUST be a string!")
         if type(expr) != str:
-            raise TypeError, "expr MUST be a string!"
+            raise TypeError("expr MUST be a string!")
         if type(value) != str:
-            raise TypeError, "value MUST be a string!"
+            raise TypeError("value MUST be a string!")
         if not self.__handle:
-            raise RuntimeError, "The Augeas object has already been closed!"
+            raise RuntimeError("The Augeas object has already been closed!")
 
         # Call the function
-        ret = Augeas._libaugeas.aug_defnode(self.__handle, name, expr, value, None)
+        ret = Augeas._libaugeas.aug_defnode(
+            self.__handle, enc(name), enc(expr), enc(value), None)
         if ret < 0:
-            raise ValueError, "Unable to register node!"
+            raise ValueError("Unable to register node!")
         return ret
 
     def move(self, src, dst):
@@ -230,17 +316,34 @@ class Augeas(object):
            does not exist yet, it and all its missing ancestors are created."""
 
         # Sanity checks
-        if not isinstance(src, basestring):
+        if not isinstance(src, string_types):
             raise TypeError("src MUST be a string!")
-        if not isinstance(dst, basestring):
+        if not isinstance(dst, string_types):
             raise TypeError("dst MUST be a string!")
         if not self.__handle:
             raise RuntimeError("The Augeas object has already been closed!")
 
         # Call the function
-        ret = Augeas._libaugeas.aug_mv(self.__handle, src, dst)
+        ret = Augeas._libaugeas.aug_mv(self.__handle, enc(src), enc(dst))
         if ret != 0:
             raise ValueError("Unable to move src to dst!")
+
+    def rename(self, src, dst):
+        """Rename the label of all nodes matching 'src' to 'lbl'."""
+
+        # Sanity checks
+        if not isinstance(src, string_types):
+            raise TypeError("src MUST be a string!")
+        if not isinstance(dst, string_types):
+            raise TypeError("dst MUST be a string!")
+        if not self.__handle:
+            raise RuntimeError("The Augeas object has already been closed!")
+
+        # Call the function
+        ret = Augeas._libaugeas.aug_rename(self.__handle, enc(src), enc(dst))
+        if ret < 0:
+            raise ValueError("Unable to rename src as dst!")
+        return ret
 
     def insert(self, path, label, before=True):
         """Create a new sibling 'label' for 'path' by inserting into the tree
@@ -252,16 +355,16 @@ class Augeas(object):
         index '[N]'."""
 
         # Sanity checks
-        if not isinstance(path, basestring):
+        if not isinstance(path, string_types):
             raise TypeError("path MUST be a string!")
-        if not isinstance(label, basestring):
+        if not isinstance(label, string_types):
             raise TypeError("label MUST be a string!")
         if not self.__handle:
             raise RuntimeError("The Augeas object has already been closed!")
 
         # Call the function
-        ret = Augeas._libaugeas.aug_insert(self.__handle, path,
-                                           label, before and 1 or 0)
+        ret = Augeas._libaugeas.aug_insert(self.__handle, enc(path),
+                                           enc(label), before and 1 or 0)
         if ret != 0:
             raise ValueError("Unable to insert label!")
 
@@ -271,13 +374,13 @@ class Augeas(object):
         removed."""
 
         # Sanity checks
-        if not isinstance(path, basestring):
+        if not isinstance(path, string_types):
             raise TypeError("path MUST be a string!")
         if not self.__handle:
             raise RuntimeError("The Augeas object has already been closed!")
 
         # Call the function
-        return Augeas._libaugeas.aug_rm(self.__handle, path)
+        return Augeas._libaugeas.aug_rm(self.__handle, enc(path))
 
     def match(self, path):
         """Return the matches of the path expression 'path'. The returned paths
@@ -296,7 +399,7 @@ class Augeas(object):
         matches more than one path segment."""
 
         # Sanity checks
-        if not isinstance(path, basestring):
+        if not isinstance(path, string_types):
             raise TypeError("path MUST be a string!")
         if not self.__handle:
             raise RuntimeError("The Augeas object has already been closed!")
@@ -306,25 +409,25 @@ class Augeas(object):
         array = ctypes.POINTER(ctypes.c_void_p)()
 
         # Call the function and pass the void ** by reference (void ***)
-        ret = Augeas._libaugeas.aug_match(self.__handle, path,
+        ret = Augeas._libaugeas.aug_match(self.__handle, enc(path),
                                           ctypes.byref(array))
         if ret < 0:
-            raise RuntimeError("Error during match procedure!")
+            raise RuntimeError("Error during match procedure!", path)
 
         # Loop through the string array
         matches = []
         for i in range(ret):
             if array[i]:
                 # Create a python string and append it to our matches list
-                matches.append(str(ctypes.cast(array[i],
+                matches.append(dec(ctypes.cast(array[i],
                                                ctypes.c_char_p).value))
 
                 # Free the string at this point in the array
                 # Wrap the string as a void* as it was not allocated by Python
-                Augeas._libpython.PyMem_Free(ctypes.c_void_p(array[i]))
+                ctypes.pythonapi.PyMem_Free(ctypes.c_void_p(array[i]))
 
         # Free the array itself
-        Augeas._libpython.PyMem_Free(array)
+        ctypes.pythonapi.PyMem_Free(array)
 
         return matches
 
@@ -336,7 +439,7 @@ class Augeas(object):
         belong to a file or is doesn't exists, ValueError is raised."""
 
         # Sanity checks
-        if not isinstance(path, basestring):
+        if not isinstance(path, string_types):
             raise TypeError("path MUST be a string!")
         if not self.__handle:
             raise RuntimeError("The Augeas object has already been closed!")
@@ -351,14 +454,14 @@ class Augeas(object):
 
         r = ctypes.byref
 
-        ret = Augeas._libaugeas.aug_span(self.__handle, path, r(filename),
+        ret = Augeas._libaugeas.aug_span(self.__handle, enc(path), r(filename),
                                          r(label_start), r(label_end),
                                          r(value_start), r(value_end),
                                          r(span_start), r(span_end))
         if (ret < 0):
             raise ValueError("Error during span procedure")
 
-        return (filename.value, label_start.value, label_end.value,
+        return (dec(filename.value), label_start.value, label_end.value,
                 value_start.value, value_end.value,
                 span_start.value, span_end.value)
 
@@ -426,23 +529,44 @@ class Augeas(object):
 
         lens: the (file)name of the lens to use
         incl: one or more glob patterns for the files to transform
-        name: a unique name; use the module name of the lens if omitted
+        name: deprecated parameter
         excl: zero or more glob patterns of files to exclude from transforming
         """
 
-        if not name:
-            name = lens.split(".")[0].replace("@", "", 1)
-        if isinstance (incl, basestring):
+        if name:
+            import warnings
+            warnings.warn("name is now deprecated in this function", DeprecationWarning,
+                          stacklevel=2)
+        if isinstance (incl, string_types):
             incl = [incl]
-        if isinstance (excl, basestring):
+        if isinstance (excl, string_types):
             excl = [excl]
 
-        xfm = "/augeas/load/%s/" % name
-        self.set (xfm + "lens", lens)
         for i in range(len(incl)):
-            self.set(xfm + "incl[%d]" % (i+1), incl[i])
+            self.transform(lens, incl[i], False)
         for i in range(len(excl)):
-            self.set(xfm + "excl[%d]" % (i+1), excl[i])
+            self.transform(lens, excl[i], True)
+
+    def transform(self, lens, file, excl=False):
+        """Add a transform for 'file' using 'lens'.
+        'excl' specifies if this the file is to be included (False)
+        or excluded (True) from the 'lens'.
+        The 'lens' may be a module name or a full lens name.
+        If a module name is given, then lns will be the lens assumed.
+        """
+
+        if not isinstance(lens, string_types):
+            raise TypeError("lens MUST be a string!")
+        if not isinstance(file, string_types):
+            raise TypeError("file MUST be a string!")
+        if not isinstance(excl, bool):
+            raise TypeError("excl MUST be a boolean!")
+        if not self.__handle:
+            raise RuntimeError("The Augeas object has already been closed!")
+
+        ret = Augeas._libaugeas.aug_transform(self.__handle, enc(lens), enc(file), excl)
+        if ret != 0:
+            raise RuntimeError("Unable to add transform!")
 
     def close(self):
         """Close this Augeas instance and free any storage associated with it.
